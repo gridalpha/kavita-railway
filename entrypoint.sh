@@ -76,19 +76,27 @@ fi
 # — so a fresh deployment would otherwise present an empty reader with no
 # obvious next step. These are public-domain texts from Project Gutenberg.
 # ---------------------------------------------------------------------------
+# Kavita's scanner enumerates sub-directories of a library folder and never the
+# folder itself, so a loose file at the library root is silently never indexed:
+# the scan completes clean, reporting "0 directories to process". Every book
+# therefore gets its own series folder, which is also Kavita's documented layout.
+DEMO_SEEDED=0
 seed_demo_media() {
-    local marker="${DATA_DIR}/.demo-media-seeded"
+    local marker="${DATA_DIR}/.demo-media-seeded-v2"
     [ "${KAVITA_DEMO_MEDIA:-true}" = "true" ] || return 0
     [ -f "$marker" ] && return 0
 
     local ok=0 id name
     while read -r id name; do
         [ -n "$id" ] || continue
-        if curl -fsSL --max-time 60 -o "${MEDIA_DIR}/books/${name}.epub" \
+        # A flat copy from the pre-series-folder layout would never be scanned.
+        rm -f "${MEDIA_DIR}/books/${name}.epub"
+        mkdir -p "${MEDIA_DIR}/books/${name}"
+        if curl -fsSL --max-time 60 -o "${MEDIA_DIR}/books/${name}/${name}.epub" \
                 "https://www.gutenberg.org/cache/epub/${id}/pg${id}-images-3.epub"; then
             ok=$((ok + 1))
         else
-            rm -f "${MEDIA_DIR}/books/${name}.epub"
+            rm -rf "${MEDIA_DIR}/books/${name}"
             log "demo media: could not fetch Gutenberg #${id}"
         fi
     done <<'BOOKS'
@@ -100,6 +108,7 @@ BOOKS
 
     if [ "$ok" -gt 0 ]; then
         touch "$marker"
+        DEMO_SEEDED=1
         log "demo media: seeded $ok public-domain books into ${MEDIA_DIR}/books"
     else
         log "demo media: nothing fetched; will retry on the next deploy"
@@ -197,6 +206,19 @@ seed_server_settings() {
     fi
 }
 
+# Newly seeded books land after the library was created on an earlier deploy, so
+# ask for a scan rather than leaving them until the nightly task.
+rescan_books() {
+    local token="$1" id
+    id=$(curl -sS --max-time 30 "$API/Library/libraries" -H "Authorization: Bearer $token" 2>/dev/null \
+        | jq -r --arg f "${MEDIA_DIR}/books" 'map(select(.folders | index($f))) | .[0].id // empty')
+    [ -n "$id" ] || return 0
+    if curl -fsS --max-time 30 -X POST "$API/Library/scan?libraryId=${id}&force=true" \
+            -H "Authorization: Bearer $token" -H 'Content-Length: 0' >/dev/null 2>&1; then
+        log "bootstrap: requested a rescan of library $id for the new demo books"
+    fi
+}
+
 # Libraries are created only when the server has none at all, so this never
 # fights an operator who has renamed or repointed them.
 seed_libraries() {
@@ -208,6 +230,7 @@ seed_libraries() {
     fi
     if [ "$existing" -gt 0 ]; then
         log "bootstrap: $existing librar(ies) already present — leaving them alone"
+        [ "$DEMO_SEEDED" = "1" ] && rescan_books "$token"
         return 0
     fi
 

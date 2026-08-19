@@ -52,7 +52,9 @@ Kavita has no web upload for library files — they arrive over the filesystem:
 railway volume files --volume <volume> upload ./book.epub /data/media/books/book.epub
 ```
 
-Then run **Scan library** from the library's ⋮ menu, or wait for the nightly scan.
+Each book needs its own folder — `books/<Series>/<file>.epub` — because Kavita's
+scanner walks sub-directories only and silently ignores files sitting at a library
+root. Then run **Scan library** from the library's ⋮ menu, or wait for the nightly scan.
 
 ## Notes
 
